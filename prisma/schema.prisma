@@ -1,0 +1,261 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// MODELOS DE USUÁRIO E AUTENTICAÇÃO
+// ============================================
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  passwordHash  String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relacionamentos
+  portfolios    Portfolio[]
+  transactions  Transaction[]
+  wallets       Wallet[]
+  integrations  Integration[]
+}
+
+// ============================================
+// MODELOS DE PORTFÓLIO E ATIVOS
+// ============================================
+
+model Portfolio {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  user     User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  holdings Holding[]
+
+  @@index([userId])
+}
+
+model Asset {
+  id          String    @id @default(cuid())
+  symbol      String
+  name        String
+  type        AssetType
+  source      AssetSource
+  
+  // Metadados específicos por tipo
+  metadata    Json?     // CNPJ para FIIs, network para crypto, etc
+  
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  // Relacionamentos
+  holdings     Holding[]
+  transactions Transaction[]
+  prices       PriceHistory[]
+
+  @@unique([symbol, type, source])
+  @@index([symbol])
+  @@index([type])
+}
+
+enum AssetType {
+  STOCK           // Ações
+  FII             // Fundos Imobiliários
+  ETF             // ETFs
+  BDR             // BDRs
+  FIXED_INCOME    // Renda Fixa
+  CRYPTO          // Criptomoedas
+  NFT             // NFTs
+  OTHER           // Outros
+}
+
+enum AssetSource {
+  B3              // Bolsa brasileira
+  EVM             // Ethereum, Polygon, BSC, etc
+  BITCOIN         // Bitcoin
+  SOLANA          // Solana
+  PARTNER         // Apps parceiros
+  MANUAL          // Lançamento manual
+}
+
+model Holding {
+  id          String   @id @default(cuid())
+  portfolioId String
+  assetId     String
+  quantity    Decimal  @db.Decimal(30, 8)
+  avgPrice    Decimal  @db.Decimal(20, 8)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relacionamentos
+  portfolio Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
+  asset     Asset     @relation(fields: [assetId], references: [id])
+
+  @@unique([portfolioId, assetId])
+  @@index([portfolioId])
+  @@index([assetId])
+}
+
+// ============================================
+// MODELOS DE TRANSAÇÕES
+// ============================================
+
+model Transaction {
+  id          String          @id @default(cuid())
+  userId      String
+  assetId     String
+  type        TransactionType
+  quantity    Decimal         @db.Decimal(30, 8)
+  price       Decimal         @db.Decimal(20, 8)
+  totalValue  Decimal         @db.Decimal(20, 2)
+  fees        Decimal?        @db.Decimal(20, 8)
+  date        DateTime
+  source      AssetSource
+  externalId  String?         // ID da transação na fonte original
+  metadata    Json?           // Hash da tx, nota de corretagem, etc
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  // Relacionamentos
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  asset Asset @relation(fields: [assetId], references: [id])
+
+  @@index([userId])
+  @@index([assetId])
+  @@index([date])
+  @@index([source])
+}
+
+enum TransactionType {
+  BUY
+  SELL
+  TRANSFER_IN
+  TRANSFER_OUT
+  DIVIDEND
+  JCP           // Juros sobre Capital Próprio
+  BONUS
+  SPLIT
+  STAKING
+  AIRDROP
+}
+
+// ============================================
+// MODELOS DE BLOCKCHAIN
+// ============================================
+
+model Wallet {
+  id          String      @id @default(cuid())
+  userId      String
+  address     String
+  network     Network
+  label       String?
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  // Relacionamentos
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([address, network])
+  @@index([userId])
+}
+
+enum Network {
+  ETHEREUM
+  POLYGON
+  BSC
+  ARBITRUM
+  OPTIMISM
+  AVALANCHE
+  BASE
+  BITCOIN
+  SOLANA
+}
+
+// ============================================
+// MODELOS DE INTEGRAÇÕES
+// ============================================
+
+model Integration {
+  id          String           @id @default(cuid())
+  userId      String
+  type        IntegrationType
+  name        String
+  config      Json?            // Configurações encriptadas
+  isActive    Boolean          @default(true)
+  lastSync    DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  // Relacionamentos
+  user       User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  syncLogs   SyncLog[]
+
+  @@index([userId])
+}
+
+enum IntegrationType {
+  B3_CEI          // Canal Eletrônico do Investidor
+  BROKER          // Corretoras
+  PARTNER_APP     // Apps parceiros
+  WALLET_SYNC     // Sincronização de carteiras
+}
+
+model SyncLog {
+  id            String      @id @default(cuid())
+  integrationId String
+  status        SyncStatus
+  message       String?
+  itemsFound    Int?
+  itemsSynced   Int?
+  startedAt     DateTime    @default(now())
+  finishedAt    DateTime?
+
+  // Relacionamentos
+  integration Integration @relation(fields: [integrationId], references: [id], onDelete: Cascade)
+
+  @@index([integrationId])
+  @@index([startedAt])
+}
+
+enum SyncStatus {
+  PENDING
+  RUNNING
+  SUCCESS
+  PARTIAL
+  FAILED
+}
+
+// ============================================
+// HISTÓRICO DE PREÇOS
+// ============================================
+
+model PriceHistory {
+  id        String   @id @default(cuid())
+  assetId   String
+  price     Decimal  @db.Decimal(20, 8)
+  volume    Decimal? @db.Decimal(30, 2)
+  date      DateTime
+  createdAt DateTime @default(now())
+
+  // Relacionamentos
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, date])
+  @@index([assetId])
+  @@index([date])
+}
